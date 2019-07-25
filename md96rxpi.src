@@ -1,0 +1,773 @@
+;******************************************************************************
+;*                                                                            *
+;* NOMBRE       : FX919.SRC                                                   *
+;* DESCRIPCION  : Controlador modem FX919                                     *
+;* LENGUAJE     :                                                             *
+;* EDITOR       :                                                             *
+;* OBSERVACIONES: VERSIàN PARA PARIDAD IMPAR                                  *
+;* FECHA INICIO : 25/10/95                                                    *
+;* TERMINADO    :                                                             *
+;******************************************************************************
+;
+; DEFINICION DE LOS PORTS
+porta   equ 00h
+portb   equ 01h
+portc   equ 02h
+portd   equ 03h
+pca     equ 04h
+pcb     equ 05h
+pcc     equ 06h
+pcd     equ 07h
+mr      equ 0ah                 ;miscellaneous register
+
+
+;============================= SEGMENTO DE RAM ============================
+
+scdat   	equ 0011h       ;sERIAL cOMUNICATIONS dATA rEGISTER
+sccr1   	equ 000eh       ;sERIAL cOMUNICATION rEGISTER 1
+sccr2   	equ 000fh       ;sERIAL cOMUNICATION rEGISTER 2
+scsr    	equ 0010h       ;sERIAL COMUNICATION sTATUS rEGISTER
+baud    	equ 000dh       ;bAUD rATE rEGISTER
+tcr     	equ 0012h       ;tIMER cONTROL rEGISTER
+tsr     	equ 0013h       ;tIMER sTATUS rEGISTER
+entry   	equ 0100h       ;direccion comienzo rom
+optreg  	equ 0fdfh       ;option register
+tcrh    	equ 0018h       ;timer count register (high)
+tcrl    	equ 0019h       ;timer count register (low)
+largo		equ 00055
+
+
+BUFFER_LEN      equ 18
+TOPE_BUFFER	equ 80
+MAX_TIMERH	equ 01h
+MAX_TIMERL	equ 00h
+
+
+
+;---------------- Definición de los bits del COMMAND REGISTER ---------------
+
+AQBC_AQLEV	equ 00h
+TSK_SFH     	equ 01h
+TSK_R3H     	equ 02h
+TSK_RDB     	equ 03h
+TSK_SFS     	equ 04h
+TSK_RSB     	equ 05h
+TSK_LFSB    	equ 06h
+
+TSK_T7H     	equ 01h
+TSK_TDB     	equ 03h
+TSK_TQB     	equ 04h
+TSK_TSB     	equ 05h
+TSK_TSO     	equ 06h
+TSK_RESET   	equ 07h
+
+
+BIT_AQBC	equ 7
+BIT_AQLEV	equ 6
+BIT_TEST	equ 1
+
+;---------------- Definición de los bits del CONTROL REGISTER ---------------
+
+BIT_HI_LO	equ 5
+BIT_DARA	equ 4
+
+
+;---------------- Definición de los bits del MODE REGISTER ---------------
+
+BIT_IRQEN	equ 7
+BIT_INVBIT 	equ 6
+BIT_TXRX	equ 5
+BIT_SCREN	equ 4
+BIT_DQEN	equ 2
+
+;---------------- Definición de los bits del STATUS REGISTER ---------------
+
+BIT_IRQ		equ 7
+BIT_BFREE	equ 6
+BIT_IBEMPTY	equ 5
+BIT_DIBOVF	equ 4
+BIT_CRCFEC	equ 3
+BIT_DQRDY	equ 2
+BIT_MOBAN	equ 1
+
+
+;---------------- Definición de los bits de control del modem  --------------
+
+CTL_RD	equ 0
+CTL_WR	equ 1
+
+CTL_A1	equ 2
+CTL_A0	equ 3
+CTL_CS	equ 4
+
+
+;---------------- Definición de las lineas de RS-232  --------------
+
+RS_CTS	equ 3
+RS_XON  equ 17
+RS_XOFF equ 19
+
+;---------------- Definición de las lineas de RADIO  --------------
+
+R_PTT	equ 7
+
+;-------------- Definición de los bits de configuración --------------------
+
+C_TEST		equ 5	;Poniendo el bit 5 del PORTA a 1 se activa el test
+WATCH_DOG	equ 7
+
+
+;***************** CALCULADO PARA CRISTAL DE 2.4576 ***********************
+
+UART_19200 equ 20h ;Baud rate a 19200
+UART_9600  equ 21h ;  "    "  "  9600 
+UART_4800  equ 22h ;  "    "  "  4800
+
+;================================ RAM ========================================
+
+                                org 30h
+
+BuffSCI   res TOPE_BUFFER
+TotBytes  res	1
+TotBlk    res	1
+CntBuff   res	1
+IrqStat   res	1
+CtrlReg   res	1
+CmndReg   res	1
+ModeReg   res	1
+StatReg   res	1
+flag      res	1
+CntBlk    res	1
+CntTimer  res	2
+status    res	1
+sava      res	1
+savx      res	1
+RamHead	  res	6
+RxHeader  res	6
+savIRQ	  res	1
+CntBytes  res	1
+PntSCI	  res   1
+TimeBlkRx res	1
+ErrCRC	  res	1
+
+;==============================================================================
+
+           
+;========================= INICIALIZACIàN CPU ===============================
+
+                              PSCT
+                           org entry    ;comienzo rom
+        lda #$82
+        sta $1fdf
+
+
+	lda #11011111b
+        sta PCA
+        sta PORTA
+
+	clra
+	sta PCB
+	
+        lda #$00
+	sta PCC	
+
+        lda #01011100b
+        sta PCD
+
+        clrx
+
+Head2Ram:
+
+	lda head,x
+	sta RamHead,x
+	incx
+	cpx #$6
+	bne Head2Ram
+
+
+;==============================================================================
+
+	clr TotBytes
+	clr CntBlk
+	clr CntBuff
+	clr IrqStat
+	clr CtrlReg
+	clr CmndReg
+	clr ModeReg
+	clr StatReg
+	clr flag
+	clr CntTimer
+	clr status
+	clr sava
+	clr savx
+	clr TimeBlkRx
+	clr ErrCRC
+
+        bclr CTL_CS,PORTA    ;/CS (Selecciona el MODEM).
+
+	lda #$1
+	sta Totblk
+
+        lda #10010100b
+        sta ModeReg
+        jsr P_ModeReg    ;Programamos el mode register para recepción.
+
+	brset 0,PORTC,p19200
+        brset 1,PORTC,p9600
+	brset 2,PORTC,p4800
+	bra beg
+
+p19200:
+	jsr b19200
+	bra beg	
+p9600:
+	jsr b9600
+	bra beg
+p4800:
+	jsr b4800
+	bra beg
+
+beg:
+	bset R_PTT,PORTA
+
+        JSR SCION       ;Activa modo sci
+	jsr IniTimer
+        cli
+	jsr IniRx
+
+main:
+	bset WATCH_DOG,PORTA
+	bclr WATCH_DOG,PORTA		;Refresco Watch dog
+        brset RS_CTS,PORTC,jXon
+        brclr RS_CTS,PORTC,jXoff
+        bra main
+
+jXon    jsr Xon
+        bra main
+jXoff   jsr Xoff
+        bra main
+
+Xon:
+        brset 2,flag,finXon
+        bset 2,flag
+        lda #RS_XOFF
+        jsr Tx2Host
+finXon:
+        rts
+
+
+
+Xoff:
+        brclr 2,flag,finXoff
+        bclr 2,flag
+        lda #RS_XON
+        jsr Tx2Host
+finXoff:
+        rts
+
+
+
+
+
+IniRx:
+	lda #TSK_RESET
+	jsr PrgTask
+
+	lda #10010100b
+	sta ModeReg
+	jsr P_ModeReg	;Ponemos el modem en recepción.
+	nop
+	nop
+	nop
+	nop
+	nop
+	bset BIT_AQBC,CmndReg
+	bset BIT_AQLEV,CmndReg
+	lda #AQBC_AQLEV
+	jsr PrgTask
+
+	lda #$ec
+	jsr P_DataBlk
+	lda #$a1
+	jsr P_DataBlk
+
+	lda #TSK_LFSB
+	jsr PrgTask
+	rts
+
+
+;-------------------- TRANSMITE LOS BLOQUES AL HOST -------------------------
+;El primer byte indica el total de bytes.
+;
+
+Blk2Host:
+        clrx
+HTxBlk:
+        brset RS_CTS,PORTC,jjXon
+        brclr RS_CTS,PORTC,jjXoff
+
+HtxB	lda BuffSCI,x
+	jsr Tx2Host
+        incx
+        dec RxHeader+1
+	bne HTxBlk
+
+FinHTxBlk:
+	rts
+
+jjXon   jsr Xon
+        bra HtxB
+jjXoff  jsr Xoff
+        bra HTxB
+        
+
+;------------------------------------------------------------------------------
+
+;=============================== SUBRUTINAS =================================
+
+
+b4800:
+        lda #10100101b	 ;Baud Rate a 4800
+        sta CtrlReg
+        jsr P_CtrlReg
+	lda #UART_4800
+	jsr SciOn
+	rts
+
+b9600:
+        lda #01100101b	 ;Baud Rate a 9600
+        sta CtrlReg
+        jsr P_CtrlReg	
+	lda #UART_9600
+	jsr SciOn
+	rts
+
+b19200:
+        lda #00110111b	 ;Baud Rate a 19200
+        sta CtrlReg
+        jsr P_CtrlReg	
+	lda #UART_19200
+	jsr SciOn
+	rts
+
+SacaFallos:
+
+;        lda ErrCRC
+;        add #$30
+;        jsr Tx2Host
+	rts
+
+bucle:
+	ldx #$ff
+buc:
+	decx
+	cpx #$00
+	bne buc
+	rts
+
+bucle1:
+	ldx #$02
+buc1:
+	decx
+	bne buc1
+	rts
+
+
+IniTimer:
+        lda #MAX_TIMERH
+        sta CntTimer
+	lda #MAX_TIMERL
+	sta CntTimer+1
+	rts
+
+
+PrgTask:
+        sta sava         ;En el acumulador ha de estar la tarea.
+
+        lda CmndReg
+        and #$f8
+        ora sava         ;En sava está la tarea a programar
+        sta CmndReg
+        jsr P_CmndReg
+
+        lda sava
+        rts
+
+
+pretim:
+        lda #$20
+        sta tcrh
+        lda #$10
+        sta tcrl
+        rts
+
+;--------------------- ESCRIBE EN EL MODE REGISTER -------------------------
+P_ModeReg:
+		 
+	sei
+        sta sava
+	lda #$ff
+
+        sta PCB
+	clra
+	sta PORTB
+        
+        bset CTL_A0,PORTA  ;A0
+        bset CTL_A1,PORTA  ;A1
+        lda ModeReg
+        sta PORTB
+	sta PORTB
+
+        bclr CTL_WR,PORTA  ;/WR
+	bset CTL_WR,PORTA
+	clra
+	sta PCB
+	lda PORTB
+        lda sava
+	cli
+        rts
+
+;--------------------- ESCRIBE UN DATA BLOCK BUFFER -------------------------
+
+;--------------------- LEE EN EL STATUS REGISTER -------------------------
+R_StatusReg:
+
+	clra
+        sta PCB
+	lda PORTB
+        bset CTL_A0,PORTA    ;A0
+        bclr CTL_A1,PORTA    ;A1
+        bclr CTL_RD,PORTA    ;/RD
+        lda PORTB
+        lda PORTB
+	sta savIRQ
+        bset CTL_RD,PORTA
+	lda savIRQ
+        rts
+
+
+;--------------------- ESCRIBE EN EL COMAND REGISTER -------------------------
+P_CmndReg:
+	sei
+        sta sava
+        lda #$ff
+        sta PCB
+	clra
+	sta PORTB
+
+        bset CTL_A0,PORTA    ;A0
+        bclr CTL_A1,PORTA    ;A1
+
+        lda CmndReg
+        sta PORTB
+        sta PORTB
+        bclr CTL_WR,PORTA    ;/WR
+        bset CTL_WR,PORTA
+	clra
+        sta PCB
+        lda sava
+	cli
+        rts
+
+;--------------------- ESCRIBE UN DATA BLOCK BUFFER -------------------------
+P_DataBlk:
+	sei
+        stx savx
+        sta sava
+
+        lda #$ff
+        sta PCB
+	clra
+	sta PORTB
+
+        bclr CTL_A0,PORTA    ;A0
+        bclr CTL_A1,PORTA    ;A1
+        bclr CTL_WR,porta    ;/WR
+	lda sava
+        sta PORTB
+        sta PORTB
+        bset CTL_WR,porta
+        ldx savx
+	clra
+        sta PCB
+        lda sava
+	cli
+        rts
+
+;--------------------- LEE UN DATA BLOCK BUFFER -------------------------
+R_DataBlk:
+	sei
+        stx savx
+        clra
+        sta PCB
+	lda PORTB
+
+        bclr CTL_A0,PORTA    ;A0
+        bclr CTL_A1,PORTA    ;A1
+        bclr CTL_RD,PORTA    ;/RD
+        lda PORTB
+        lda PORTB
+	sta sava
+        bset CTL_RD,PORTA
+	lda sava
+        ldx savx
+	cli
+        rts
+
+
+
+;----------------------- PROGRAMA EL CONTROL REGISTER -----------------------
+P_CtrlReg:
+	sei
+        stx savx
+        sta sava
+        lda #$ff
+        sta PCB
+	clra 
+	STA PORTB
+
+        bclr CTL_A0,PORTA    ;CTL_A0
+        bset CTL_A1,PORTA    ;CTL_A1
+
+        lda CtrlReg
+        sta PORTB
+        sta PORTB
+        bclr CTL_WR,PORTA    ;/WR
+        bset CTL_WR,PORTA
+        ldx savx
+        clra
+        sta PCB
+        lda sava
+	cli
+        rts
+;------------------------------------------------------------------------------
+
+;----------------- CONFIGURACION INTERFACE DE COMUNICACIONES ------------------
+SCION:
+	sta sava
+        LDA #$10        ;9 bits (8 + paridad)
+        STA SCCR1
+
+        LDA #$2C        ;- TDRE interrupt disabled
+                        ;- TC interrupt disabled
+                        ;- SCI interrupt enabled
+                        ;- IDLE interrupt disbaled
+                        ;- After the last byte is transmitted, the TDO line
+                        ;  becomes a hight-impedance line.
+                        ;- Receiver disabled and RDRF, IDLE, OR, NF and FE
+                        ;  status bits are inhibited.
+
+        STA SCCR2
+
+	lda sava
+        	        ;Baud rate a 9600 - #$30
+                        ;            4800 - #$31
+                        ;            2400 - #$32
+                        ;            1200 - #$33
+                        ;             600 - #$34
+                        ;             300 - #$35
+                        ;             150 - #$36
+                        ;              75 - #$37
+        sta BAUD
+        RTS
+
+;------------------------------------------------------------------------------
+
+
+;-------------- TRANSMITE AL HOST EL CONTENIDO DEL REGISTRO A ------------------
+
+Tx2Host:
+        sta sava
+        stx savx
+
+        bset 6,sccr1
+        ldx #$8
+paridad:
+        rola
+        bcs par
+dx      decx
+        bne paridad
+        bra ya
+par:
+        brset 6,sccr1,quita
+        bset 6,SCCR1    ;Mantenemos un n£mero par de bits a 1
+        bra dx
+
+quita   bclr 6,SCCR1    ;Mantenemos un n£mero par de bits a 1
+        bra dx
+
+ya:
+        lda sava
+skip    brclr 7,SCSR,*             ;MIRA SI ESTA OCUPADO
+        sta SCDAT
+espera:
+        brclr 6,SCSR,espera        ;ESPERA PARA ACABAR DE TRANSMITIR
+        ldx savx
+        rts
+
+
+;============================ RUTINAS INTERRUPION ===========================
+
+;--------------------------------- IRQ --------------------------------------
+IRQ:
+
+        jsr R_StatusReg
+        tax
+        and #$80
+        beq FinIrq
+        stx IrqStat
+
+	brset BIT_BFREE,IrqStat,jBfree
+Irq2:	brset BIT_IBEMPTY,IrqStat,jIBempty
+Irq3:
+FinIrq:
+        rti
+
+
+
+jIBempty:
+	jmp Irq3
+
+;- - - - - - - - -  PROCESO DE LAS TAREAS EN MODO RX - - - - - - - - - - - -
+
+jBfree:
+	clr TimeBlkRx
+;        brclr BIT_TXRX,ModeReg,ProcRX   ;Está en modo transmisión.
+;        jmp ProcTX
+
+ProcRX:
+	lda CmndReg
+	and #$07
+	ldx #$3
+        fcb 42h         ;mul
+	tax
+	jmp ProcesRx,x
+
+ProcesRx:
+	jmp Irq2
+	jmp ProcSFH
+	jmp ProcR3H
+	jmp ProcRDB
+	jmp ProcSFS
+	jmp ProcRSB
+	jmp ProcLFSB
+	jmp Irq2	;Tarea RESET
+
+	
+ProcLFSB:		;Ya tiene el FRAME a recibir y se queda esperando
+			;a que llege un mensaje con dicho frame.
+	lda #TSK_SFH	;Cuando tenga el frame causará una interrupcion
+	jsr PrgTask	;de BFREE y procesará la tarea TSK_SFH.
+	jmp Irq2
+
+
+ProcSFH:
+	brset BIT_CRCFEC,IrqStat,FinRx ;El CRC es erroneo, rechaza este bloque.
+
+	jsr R_DataBlk	;Ha recibido un frame y se apunta los byte de control.
+	sta RxHeader	;Número de bytes a recibir
+	jsr R_DataBlk	
+	sta RxHeader+1	;En RxHeader+1 está el número de bloques a recibir.
+	clr PntSCI
+
+OtroBlk:
+	lda #TSK_RDB	;Programa el modem para que cuando tenga los bloques
+	jsr PrgTask	;cause una interrupción de tipo BFREE, con lo cual
+	clr TotBytes	;procesará la tarea TSK_RDB.
+	jmp Irq2
+
+
+ProcRDB:
+	brset BIT_CRCFEC,IrqStat,FinRx  ;Error de CRC, rechaza este bloque.
+	ldx PntSCI
+	
+CogeBlk:
+	cpx #TOPE_BUFFER
+	beq TxSerie
+	jsr R_DataBlk
+	sta BuffSCI,x
+	incx
+	stx PntSCI
+	inc TotBytes
+	lda TotBytes
+	cmp #18
+	bne CogeBlk
+	
+
+        lda PntSCI
+        cmp RxHeader+1
+        bmi OtroBlk     ;Pone tarea para recibir otro bloque.
+
+TxSerie:
+	jsr Blk2Host
+	clr TotBytes
+	bclr 0,flag
+	jmp ProcLFSB
+	jmp Irq2
+
+FinRx:
+;        lda #$7
+;        jsr Tx2Host
+;        inc ErrCRC
+        bclr 0,flag
+	jmp ProcLFSB
+
+ProcR3H:
+ProcSFS:
+ProcRSB:
+	
+	jmp Irq2
+
+
+;----------------------------------------------------------------------------
+;------------------------------------------------------------------------------
+
+sci:
+timer:                 
+SPI:
+SWI:
+
+        RTI
+;==============================================================================
+
+
+TstMsg:
+
+	fcb 'test test test test',0
+
+head:
+          fcb 0cch,0cch,0ech,0a1h,00,01
+;             \_______/ \_______/ __ __ 
+;             .            .       . . 
+;             .            .       . .
+;             .            .       . . 
+;             .            .       . .....Total número de bloques
+;             .            .       ...... Reservado
+;             .            .............Frame  
+;             ......................Bytes de sincronismo.
+
+;======================== VECTORES INTERRUPCION ===============================
+                               ORG 1FF4H
+
+        FDB SPI
+        FDB SCI
+        FDB TIMER
+        FDB IRQ
+        FDB SWI     
+        FDB ENTRY  
+	    
+;------------------------------------------------------------------------------
+;-------------------- CONFIGURACION REGISTROS --------------------------------
+
+                                org 1ff0h
+	fdb 00
+
+	
+				org 1fdfh
+
+	fcb 082h
+;-----------------------------------------------------------------------------
+
+        END
+
+

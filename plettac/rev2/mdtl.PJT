@@ -1,0 +1,30 @@
+[PROJECT]
+Target=mdtl.HEX
+Development_Mode=16
+Processor=0x6C63
+ToolSuite=CCS
+
+[Directories]
+Include=
+Library=
+LinkerScript=
+
+[Target Data]
+FileList=mdtl.c;
+BuildTool=CCSC
+OptionString=-p +FM
+AdditionalOptionString=
+
+[mdtl.c]
+Type=4
+Path=
+FileList=
+BuildTool=
+OptionString=
+AdditionalOptionString=
+
+[mru-list]
+1=Z:\FX909\PLETTAC\REV2\MDTL.C
+
+[Windows]
+0=0000 Z:\FX909\PLETTAC\REV2\MDTL.C 44 44 566 325 3 0

@@ -1,0 +1,84 @@
+;******************************************************************************
+;*                                                                            *
+;* NOMBRE       :                                                             *
+;* DESCRIPCION  :                                                             *
+;* LENGUAJE     :                                                             *
+;* EDITOR       :                                                             *
+;* OBSERVACIONES:                                                             *
+;*                                                                            *
+;*                                                                            *
+;******************************************************************************
+;
+; DEFINICION DE LOS PORTS
+porta   equ 00h
+portb   equ 01h
+portc   equ 02h
+portd   equ 03h
+pca     equ 04h
+pcb     equ 05h
+pcc     equ 06h
+pcd     equ 07h
+mr      equ 0ah                 ;miscellaneous register
+
+
+
+;============================= SEGMENTO DE RAM ============================
+
+scdat   equ 0011h       ;sERIAL cOMUNICATIONS dATA rEGISTER
+sccr1   equ 000eh       ;sERIAL cOMUNICATION rEGISTER 1
+sccr2   equ 000fh       ;sERIAL cOMUNICATION rEGISTER 2
+scsr    equ 0010h       ;sERIAL COMUNICATION sTATUS rEGISTER
+baud    equ 000dh       ;bAUD rATE rEGISTER
+tcr     equ 0012h       ;tIMER cONTROL rEGISTER
+tsr     equ 0013h       ;tIMER sTATUS rEGISTER
+entry   equ 0100h       ;direccion comienzo rom
+optreg  equ 0fdfh       ;option register
+tcrh    equ 0018h       ;timer count register (high)
+tcrl    equ 0019h       ;timer count register (low)
+largo   equ 00055
+                               org 50h
+
+;================================ RAM ========================================
+
+
+
+;==============================================================================
+
+                           org entry    ;comienzo rom
+
+;------------------------------------------------------------------------------
+
+;============================ RUTINAS INTERRUPION ===========================
+
+IRQ:
+TIMER:
+SPI:
+SCI:
+SWI:
+
+        RTI
+;==============================================================================
+
+
+;======================== VECTORES INTERRUPCION ===============================
+                               ORG 1FF4H
+
+        FDB SPI
+        FDB SCI
+        FDB TIMER
+        FDB IRQ
+        FDB SWI
+        FDB ENTRY
+
+;------------------------------------------------------------------------------
+;-------------------- CONFIGURACION REGISTROS --------------------------------
+
+                                ORG 1FDFH       'OPTION REGISTER
+
+        FCB 0C8H               ;RAM0 = 1
+                               ;RAM1 = 1
+;-----------------------------------------------------------------------------
+
+        END
+
+
